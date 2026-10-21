@@ -16,7 +16,7 @@ echo "=========================================="
 # 2. Revert PAM Stack Modifications
 echo "[*] Removing PAM integrations from SDDM and Sudo..."
 # We use '\@' as the sed delimiter to avoid conflicts with the forward slashes in the path
-PAM_RULE="auth sufficient pam_exec.so quiet \/usr\/bin\/python3 \/opt\/usb-auth\/pam_verify.py"
+PAM_RULE="auth sufficient pam_exec.so quiet seteuid \/usr\/bin\/python3 \/opt\/usb-auth\/pam_verify.py"
 
 if [ -f "/etc/pam.d/sddm" ]; then
     sed -i "/$PAM_RULE/d" /etc/pam.d/sddm

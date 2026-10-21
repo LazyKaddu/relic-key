@@ -1,4 +1,3 @@
-#!/usr/bin/python3
 import os
 import sys
 import hashlib
@@ -7,18 +6,12 @@ import subprocess
 import time
 import syslog
 
-# ==========================================
-# CONFIGURATION
-# The install.sh script will automatically 
-# replace the UUID placeholder below.
-# ==========================================
-USB_MOUNT_POINT: str = "/mnt/usb_auth"
-USB_DEV_NODE: str = "/dev/disk/by-uuid/REPLACE_ME_WITH_UUID"
-SYSTEM_DB_PATH: str = "/etc/custom-auth/keys.db"
-USB_KEY_PATH: str = f"{USB_MOUNT_POINT}/auth.key"
+USB_MOUNT_POINT = "/mnt/usb_auth"
+USB_DEV_NODE = "/dev/disk/by-uuid/REPLACE_ME_WITH_UUID"
+SYSTEM_DB_PATH = "/etc/custom-auth/keys.db"
+USB_KEY_PATH = f"{USB_MOUNT_POINT}/auth.key"
 
 def log(message, is_error=False):
-    """Logs messages to the system journal for easy debugging."""
     level = syslog.LOG_ERR if is_error else syslog.LOG_INFO
     syslog.syslog(level, message)
     if is_error:
@@ -28,19 +21,35 @@ def log(message, is_error=False):
 
 def mount_usb():
     os.makedirs(USB_MOUNT_POINT, exist_ok=True)
-    result = subprocess.run(["mount", USB_DEV_NODE, USB_MOUNT_POINT], capture_output=True, text=True)
-    if result.returncode != 0:
-        log(f"Failed to mount USB: {result.stderr}", is_error=True)
-        return False
-    return True
+    if os.path.ismount(USB_MOUNT_POINT):
+        return True
+        
+    # Wait up to 3 seconds for the udev UUID symlink to appear
+    for _ in range(6):
+        if os.path.exists(USB_DEV_NODE):
+            break
+        time.sleep(0.5)
+        
+    # Retry mount up to 3 times in case the filesystem is settling
+    for attempt in range(3):
+        result = subprocess.run(
+            ["/usr/bin/mount", USB_DEV_NODE, USB_MOUNT_POINT],
+            capture_output=True,
+            text=True
+        )
+        if result.returncode == 0:
+            return True
+        time.sleep(0.5)
+        
+    log(f"Failed to mount USB after retries (code {result.returncode}): {result.stderr.strip()}", is_error=True)
+    return False
 
 def unmount_usb():
-    subprocess.run(["umount", USB_MOUNT_POINT], capture_output=True)
+    subprocess.run(["/usr/bin/umount", USB_MOUNT_POINT], capture_output=True)
 
 def unlock_screen():
-    # loginctl unlock-sessions instantly drops the KDE Plasma lock screen
     log("Key verified. Unlocking KDE Plasma sessions...")
-    subprocess.run(["loginctl", "unlock-sessions"], check=False)
+    subprocess.run(["/usr/bin/loginctl", "unlock-sessions"], check=False)
 
 def verify_and_roll():
     if not os.path.exists(USB_KEY_PATH):
@@ -51,36 +60,31 @@ def verify_and_roll():
         log("System keys.db missing. Has the system been initialized?", is_error=True)
         return False
 
-    # Read current state
     with open(USB_KEY_PATH, "r") as f:
         usb_secret = f.read().strip()
 
     with open(SYSTEM_DB_PATH, "r") as f:
         stored_hash = f.read().strip()
 
-    # 1. Verify Cryptographic Match
     current_hash = hashlib.sha256(usb_secret.encode()).hexdigest()
     if current_hash != stored_hash:
         log("SECURITY ALERT: USB key does not match system database. Cloned or desynced drive!", is_error=True)
         return False
 
-    # 2. Generate New Rolling Key
     new_secret = secrets.token_urlsafe(64)
     new_hash = hashlib.sha256(new_secret.encode()).hexdigest()
 
-    # 3. Atomic Write to USB
     tmp_usb_path = f"{USB_KEY_PATH}.tmp"
     try:
         with open(tmp_usb_path, "w") as f:
             f.write(new_secret)
             f.flush()
-            os.fsync(f.fileno()) # Force write to physical hardware
+            os.fsync(f.fileno())
         os.rename(tmp_usb_path, USB_KEY_PATH)
     except Exception as e:
         log(f"Failed writing new key to USB: {e}", is_error=True)
         return False
 
-    # 4. Atomic Write to System DB
     tmp_db_path = f"{SYSTEM_DB_PATH}.tmp"
     try:
         with open(tmp_db_path, "w") as f:
@@ -98,8 +102,6 @@ def verify_and_roll():
 if __name__ == "__main__":
     syslog.openlog(ident="usb-auth-daemon", facility=syslog.LOG_AUTH)
     log("USB detected by udev. Starting authentication sequence.")
-    
-    # Give the Linux kernel a moment to populate the block device in /dev/disk/by-uuid/
     time.sleep(1.5) 
     
     if mount_usb():
