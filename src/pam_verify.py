@@ -12,10 +12,10 @@ import time
 # The install.sh script will automatically 
 # replace the UUID placeholder below.
 # ==========================================
-USB_MOUNT_POINT = "/mnt/usb_auth"
-USB_DEV_NODE = "/dev/disk/by-uuid/REPLACE_ME_WITH_UUID"
-SYSTEM_DB_PATH = "/etc/custom-auth/keys.db"
-USB_KEY_PATH = f"{USB_MOUNT_POINT}/auth.key"
+USB_MOUNT_POINT: str = "/mnt/usb_auth"
+USB_DEV_NODE: str = "/dev/disk/by-uuid/REPLACE_ME_WITH_UUID"
+SYSTEM_DB_PATH: str = "/etc/custom-auth/keys.db"
+USB_KEY_PATH: str = f"{USB_MOUNT_POINT}/auth.key"
 
 def log(message, is_error=False):
     """Logs PAM execution silently to journalctl for debugging."""
