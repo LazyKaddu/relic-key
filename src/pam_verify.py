@@ -19,15 +19,26 @@ def mount_usb():
     os.makedirs(USB_MOUNT_POINT, exist_ok=True)
     if os.path.ismount(USB_MOUNT_POINT):
         return True
-    result = subprocess.run(
-        ["/usr/bin/mount", USB_DEV_NODE, USB_MOUNT_POINT],
-        capture_output=True,
-        text=True
-    )
-    if result.returncode != 0:
-        log(f"Mount failed (code {result.returncode}): {result.stderr.strip()}", is_error=True)
-        return False
-    return True
+        
+    # Wait up to 3 seconds for the udev UUID symlink to appear at boot
+    for _ in range(6):
+        if os.path.exists(USB_DEV_NODE):
+            break
+        time.sleep(0.5)
+        
+    # Retry mount up to 3 times in case the block device is settling
+    for attempt in range(3):
+        result = subprocess.run(
+            ["/usr/bin/mount", USB_DEV_NODE, USB_MOUNT_POINT],
+            capture_output=True,
+            text=True
+        )
+        if result.returncode == 0:
+            return True
+        time.sleep(0.5)
+        
+    log(f"Mount failed after retries (code {result.returncode}): {result.stderr.strip()}", is_error=True)
+    return False
 
 def unmount_usb():
     subprocess.run(["/usr/bin/umount", USB_MOUNT_POINT], capture_output=True)
