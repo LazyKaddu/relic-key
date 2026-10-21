@@ -1,0 +1,15 @@
+# ==========================================
+# FEDORA USB UNLOCKER - UDEV HARDWARE RULES
+# ==========================================
+# These rules tell the Linux kernel to watch for a specific USB device 
+# and trigger our background scripts the millisecond it is inserted or removed.
+
+# TRIGGER ON INSERTION
+# We use ATTRS here because the device attributes are actively readable when plugged in.
+ACTION=="add", SUBSYSTEM=="usb", ATTRS{idVendor}=="REPLACE_VENDOR_ID", ATTRS{idProduct}=="REPLACE_PRODUCT_ID", RUN+="/opt/usb-auth/udev_trigger.sh unlock"
+
+# TRIGGER ON REMOVAL
+# We MUST use ENV here instead of ATTRS. When a USB is yanked out, the physical 
+# attributes disappear from the kernel instantly, but the environment variables 
+# of the disconnect event are preserved.
+ACTION=="remove", SUBSYSTEM=="usb", ENV{ID_VENDOR_ID}=="REPLACE_VENDOR_ID", ENV{ID_MODEL_ID}=="REPLACE_PRODUCT_ID", RUN+="/opt/usb-auth/udev_trigger.sh lock"
