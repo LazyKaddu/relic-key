@@ -20,12 +20,21 @@ def mount_usb():
     if os.path.ismount(USB_MOUNT_POINT):
         return True
         
+    pam_service = os.environ.get("PAM_SERVICE", "")
+    # Fast-fail for interactive sudo if device is not present
+    if pam_service == "sudo" and not os.path.exists(USB_DEV_NODE):
+        return False
+
     # Wait up to 3 seconds for the udev UUID symlink to appear at boot
     for _ in range(6):
         if os.path.exists(USB_DEV_NODE):
             break
         time.sleep(0.5)
         
+    if not os.path.exists(USB_DEV_NODE):
+        log(f"Device node missing after settling timeout: {USB_DEV_NODE}", is_error=True)
+        return False
+
     # Retry mount up to 3 times in case the block device is settling
     for attempt in range(3):
         result = subprocess.run(
@@ -88,10 +97,6 @@ def verify_and_roll():
 
 if __name__ == "__main__":
     syslog.openlog(ident="usb-pam-verify", facility=syslog.LOG_AUTH)
-
-    if not os.path.exists(USB_DEV_NODE):
-        log(f"Device node missing: {USB_DEV_NODE}", is_error=True)
-        sys.exit(1)
 
     if mount_usb():
         try:
