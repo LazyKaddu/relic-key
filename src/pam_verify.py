@@ -7,26 +7,40 @@ import syslog
 import time
 
 USB_MOUNT_POINT = "/mnt/usb_auth"
-USB_DEV_NODE = "/dev/disk/by-uuid/REPLACE_ME_WITH_UUID"
+USB_DEV_NODE = "/dev/disk/by-uuid/d6bc3dde-8f7a-4790-9c77-37ff28f985e3"
 SYSTEM_DB_PATH = "/etc/custom-auth/keys.db"
 USB_KEY_PATH = f"{USB_MOUNT_POINT}/auth.key"
 
 def log(message, is_error=False):
     level = syslog.LOG_ERR if is_error else syslog.LOG_INFO
     syslog.syslog(level, message)
+    # Also write hard debug output to a file in case syslog is restricted at boot
+    try:
+        with open("/var/log/usb-debug/pam_runtime.log", "a") as f:
+            f.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} - {message}\n")
+    except Exception:
+        pass
 
 def mount_usb():
+        
+    # Retry loop for early-boot block device settling
+    device_ready = False
+    for _ in range(8):
+        if os.path.exists(USB_DEV_NODE):
+            device_ready = True
+            break
+        time.sleep(0.5)
+
+    if not device_ready:
+        log(f"Device node missing at startup after waiting: {USB_DEV_NODE}", is_error=True)
+        sys.exit(1)
+        
+
     os.makedirs(USB_MOUNT_POINT, exist_ok=True)
     if os.path.ismount(USB_MOUNT_POINT):
         return True
+
         
-    # Wait up to 3 seconds for the udev UUID symlink to appear at boot
-    for _ in range(6):
-        if os.path.exists(USB_DEV_NODE):
-            break
-        time.sleep(0.5)
-        
-    # Retry mount up to 3 times in case the block device is settling
     for attempt in range(3):
         result = subprocess.run(
             ["/usr/bin/mount", USB_DEV_NODE, USB_MOUNT_POINT],
@@ -37,7 +51,7 @@ def mount_usb():
             return True
         time.sleep(0.5)
         
-    log(f"Mount failed after retries (code {result.returncode}): {result.stderr.strip()}", is_error=True)
+    log(f"Mount failed (code {result.returncode}): {result.stderr.strip()}", is_error=True)
     return False
 
 def unmount_usb():
@@ -56,7 +70,7 @@ def verify_and_roll():
 
     current_hash = hashlib.sha256(usb_secret.encode()).hexdigest()
     if current_hash != stored_hash:
-        log("SECURITY ALERT: PAM USB key mismatch. Fallback to password.", is_error=True)
+        log("SECURITY ALERT: PAM USB key mismatch.", is_error=True)
         return False
 
     new_secret = secrets.token_urlsafe(64)
@@ -70,7 +84,7 @@ def verify_and_roll():
             os.fsync(f.fileno())
         os.rename(tmp_usb, USB_KEY_PATH)
     except Exception as e:
-        log(f"PAM execution failed writing to USB: {e}", is_error=True)
+        log(f"Failed writing to USB: {e}", is_error=True)
         return False
 
     tmp_db = f"{SYSTEM_DB_PATH}.tmp"
@@ -81,16 +95,23 @@ def verify_and_roll():
             os.fsync(f.fileno())
         os.rename(tmp_db, SYSTEM_DB_PATH)
     except Exception as e:
-        log(f"PAM execution failed writing to System DB: {e}", is_error=True)
+        log(f"Failed writing to System DB: {e}", is_error=True)
         return False
 
     return True
 
 if __name__ == "__main__":
     syslog.openlog(ident="usb-pam-verify", facility=syslog.LOG_AUTH)
+    os.makedirs("/var/log/usb-debug", exist_ok=True)
+
+    try:
+        os.setresgid(0, 0, 0)
+        os.setresuid(0, 0, 0)
+    except Exception as e:
+        log(f"UID elevation notice: {e}")
 
     if not os.path.exists(USB_DEV_NODE):
-        log(f"Device node missing: {USB_DEV_NODE}", is_error=True)
+        log(f"Device node missing at startup: {USB_DEV_NODE}", is_error=True)
         sys.exit(1)
 
     if mount_usb():
